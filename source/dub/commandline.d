@@ -1451,6 +1451,7 @@ class GenerateCommand : PackageBuildCommand {
 			"visuald - VisualD project files",
 			"sublimetext - SublimeText project file",
 			"cmake - CMake build scripts",
+			"ninja - Ninja build scripts",
 			"build - Builds the package directly",
 			"",
 			"An optional package name can be given to generate a different package than the root/CWD package."
