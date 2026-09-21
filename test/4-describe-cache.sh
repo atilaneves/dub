@@ -27,12 +27,28 @@ cmp "$fixture/library-path.json" "$fixture/library-path-live.json"
 unset LD_LIBRARY_PATH
 
 function check_description {
+    local previous_inode=''
+    if [[ -f "$cache" ]]; then
+        previous_inode=$(stat -c %i "$cache")
+    fi
     # A first invocation can create selections or build directories. Such an
     # invocation must not publish a snapshot of inputs changed during the run.
-    "$DUB" describe > "$fixture/cached.json"
+    if [[ -p "$cache" ]]; then
+        # Opening a FIFO cache must not block waiting for a writer; this first
+        # invocation also replaces it with a regular cache file.
+        timeout 10 "$DUB" describe > "$fixture/cached.json"
+    else
+        "$DUB" describe > "$fixture/cached.json"
+    fi
+    # A changed fixture may still have a fresh ctime after the fallback run.
+    # Let it age beyond the cache's conservative timestamp boundary.
+    sleep 2
     "$DUB" describe > "$fixture/cached.json"
     [[ -f "$cache" ]] || die $LINENO "No description cache: $1"
     local inode=$(stat -c %i "$cache")
+    if [[ -n "$previous_inode" ]]; then
+        [[ "$inode" != "$previous_inode" ]] || die $LINENO "Cache was not replaced: $1"
+    fi
     "$DUB" describe > "$fixture/cached.json"
     [[ $(stat -c %i "$cache") == "$inode" ]] || die $LINENO "Cache missed: $1"
     DUB_NO_DESCRIBE_CACHE=1 "$DUB" describe > "$fixture/live.json"
@@ -40,6 +56,29 @@ function check_description {
 }
 
 check_description initial
+
+# Inputs newer than the start boundary must not publish a cache, even when
+# their metadata is otherwise unchanged during discovery.
+rm -f "$cache"
+touch -d '1 hour' dub.json
+"$DUB" describe > "$fixture/future.json"
+[[ ! -e "$cache" ]] || die $LINENO 'Future-dated input was cached'
+DUB_NO_DESCRIBE_CACHE=1 "$DUB" describe > "$fixture/future-live.json"
+cmp "$fixture/future.json" "$fixture/future-live.json" || die $LINENO 'Future description differs from live output'
+
+rm -f "$cache"
+touch -d '3 seconds ago' dub.json
+recent_ctime=$(stat -c %Z dub.json)
+"$DUB" describe > "$fixture/recent.json"
+# Only assert the ctime-only case when the command stayed in the same
+# timestamp window; crossing its boundary can legitimately allow caching.
+end_boundary=$(( $(date +%s) / 2 * 2 ))
+if (( recent_ctime >= end_boundary )); then
+    [[ ! -e "$cache" ]] || die $LINENO 'Recently modified input was cached'
+fi
+
+touch -d '3 seconds ago' dub.json
+check_description 'aged timestamp'
 printf 'module added;\n' > source/empty/added.d
 check_description 'source added in empty directory'
 rm source/original.d
@@ -61,6 +100,7 @@ mkdir -p "$fixture/compiler-input"
 printf 'module compiler_input;\n' > "$fixture/compiler-input/extra.d"
 printf '[Environment]\nDFLAGS=%s\n' "$fixture/compiler-input/extra.d" > dmd.conf
 "$DUB" describe > "$fixture/compiler-input/warm.json"
+sleep 2
 "$DUB" describe > "$fixture/compiler-input/warm.json"
 [[ -f "$cache" ]] || die $LINENO 'No cache for compiler source input'
 printf 'module compiler_input;\nthis is invalid;\n' > "$fixture/compiler-input/extra.d"
@@ -89,8 +129,6 @@ printf '\377' | dd of="$cache" bs=1 seek=48 conv=notrunc status=none
 check_description 'corrupt cache header'
 rm "$cache"
 mkfifo "$cache"
-# Opening a non-regular cache must not block waiting for a writer.
-timeout 10 "$DUB" describe > "$fixture/fifo.json"
 check_description 'FIFO cache replaced'
 cp -p dub.json "$fixture/recipe-before"
 printf '{"name":"renamed-cache-again","targetType":"library"}\n' > dub.json

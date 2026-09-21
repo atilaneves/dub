@@ -7,6 +7,19 @@ compiler configuration, executable identities, and shared libraries. Changes
 to the environment also invalidate it. The first invocation and invalidated
 entries run normal discovery and additionally collect the cache inputs.
 
+The cache-validation fast path runs before druntime initialization. Cache
+building and input discovery then use Linux procfs, POSIX identity/file
+syscalls, and supported ld-linux ELF loader information. Other platforms
+continue to use the ordinary $(D dub describe) command.
+Unsupported Linux runtime loaders or discovery inputs also fall back to the
+ordinary command.
+
+Root-prefix source and import globs such as $(D *.d), $(D **/*.d), or
+$(D extra*/...) may traverse the package directory itself during discovery.
+When that traversal reaches cache-managed state such as $(D .dub), caching is
+disabled for that invocation and $(D dub describe) falls back to its ordinary
+uncached behavior. These glob patterns retain their existing semantics.
+
 The initial implementation supports native DMD and falls back to the ordinary
 command for other compilers, compiler wrappers, generation hooks, file copying,
 Git configuration includes, pkg-config resolution, and additional command-line arguments. Corrupted

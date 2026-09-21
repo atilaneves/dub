@@ -7,7 +7,7 @@
 */
 module dub.internal.vibecompat.core.file;
 
-version (linux) import dub.internal.describecache : describeInput;
+import dub.internal.describecache : describeInput;
 
 public import dub.internal.vibecompat.inet.path;
 
@@ -33,14 +33,14 @@ public void writeFile(NativePath path, const void[] buffer)
 /// Returns the content of a file
 public ubyte[] readFile(NativePath path)
 {
-	version (linux) describeInput(path.toNativeString());
+	describeInput(path.toNativeString());
 	return cast(ubyte[]) std.file.read(path.toNativeString());
 }
 
 /// Returns the content of a file as text
 public string readText(NativePath path)
 {
-    version (linux) describeInput(path.toNativeString());
+    describeInput(path.toNativeString());
     return std.file.readText(path.toNativeString());
 }
 
@@ -176,7 +176,7 @@ bool existsFile(NativePath path) {
 /// ditto
 bool existsFile(string path)
 {
-	version (linux) describeInput(path);
+	describeInput(path);
 	return std.file.exists(path);
 }
 
@@ -216,7 +216,7 @@ void ensureDirectory(NativePath path)
 int delegate(scope int delegate(ref FileInfo)) iterateDirectory(NativePath path)
 {
 	int iterator(scope int delegate(ref FileInfo) del){
-		version (linux) describeInput(path.toNativeString());
+		describeInput(path.toNativeString());
 		foreach (DirEntry ent; dirEntries(path.toNativeString(), SpanMode.shallow)) {
 			auto fi = makeFileInfo(ent);
 			if (auto res = del(fi))

@@ -62,6 +62,7 @@ public final class RealFS : Filesystem {
     /// Reads a file, returns the content as `ubyte[]`
     public override ubyte[] readFile (in NativePath path) const scope
     {
+        // Keep file-read instrumentation in the shared wrapper on Linux.
         return dub.internal.vibecompat.core.file.readFile(path);
     }
 

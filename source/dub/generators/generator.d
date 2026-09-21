@@ -1128,6 +1128,9 @@ void runBuildCommands(CommandType type, in string[] commands, in Package pack, i
 
 	version (linux) {
 		import dub.internal.describecache : cancelDescribeCache;
+		// Hooks are arbitrary commands and may change files or other inputs
+		// after the cache has recorded them, so their execution invalidates the
+		// in-progress description snapshot.
 		cancelDescribeCache();
 	}
 	auto env = makeCommandEnvironmentVariables(type, pack, proj, settings, build_settings, extraVars);

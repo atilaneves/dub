@@ -1,5 +1,19 @@
-/** Standalone description cache. Unsupported inputs always use normal DUB. */
+/**
+ * Standalone description cache. Unsupported inputs always use normal DUB.
+ *
+ * This module is currently Linux-only because its early path relies on Linux
+ * procfs (/proc/self/exe), POSIX file and identity syscalls, and the later
+ * discovery path inspects /proc/self/maps and supported ld-linux ELF
+ * interpreters to account for runtime libraries. The cache hit is checked
+ * before druntime initialization (see app.d). Other platforms therefore keep
+ * the regular describe path; adding them would require equivalent procfs and
+ * loader/input discovery mechanisms.
+ */
 module dub.internal.describecache;
+
+void describeInput(string path) {
+    version (linux) describeInputLinux(path);
+}
 
 version (linux):
 
@@ -134,18 +148,25 @@ private bool[string] libraries;
 private string cacheDirectory;
 private Stamp cacheDirectoryStamp;
 private ubyte[32] initialKey;
+private long cacheStartTime;
+private string workingDirectory;
 
 void startDescribeCache(string[] args) {
-    import std.file : mkdirRecurse, thisExePath;
+    import std.file : getcwd;
     import std.path : absolutePath;
+    import std.datetime : Clock;
     if (args.length != 2 || args[1] != "describe" || getenv("DUB_NO_DESCRIBE_CACHE")) return;
     try {
-        mkdirRecurse(".dub");
+        // Filesystems with coarse timestamp precision can otherwise make an
+        // input changed during this invocation look unchanged. Allow a margin
+        // for that precision by rounding the start boundary down to two seconds.
+        auto now = Clock.currTime().toUnixTime;
+        cacheStartTime = (now / 2) * 2;
         active = contextKey(initialKey);
-        cacheDirectory = absolutePath(".dub");
+        workingDirectory = getcwd();
+        cacheDirectory = absolutePath(".dub", workingDirectory);
         import std.string : toStringz;
         if (!stamp(cacheDirectory.toStringz, cacheDirectoryStamp)) { active = false; return; }
-        describeLibraries(thisExePath());
         describeRuntimeInputs();
         describeInput("/etc/ld.so.preload");
     } catch (Exception) { active = false; }
@@ -178,14 +199,14 @@ private void describeRuntimeInputs() {
 
 void cancelDescribeCache() nothrow { active = false; }
 
-void describeInput(string path) {
+private void describeInputLinux(string path) {
     import std.path : absolutePath, dirName;
     import std.string : toStringz, fromStringz;
     import std.algorithm : startsWith;
     import core.sys.posix.stdlib : realpath;
     if (!active) return;
     try {
-        path = absolutePath(path);
+        path = absolutePath(path, workingDirectory);
         while (path.length > 1 && path[$ - 1] == '/') path = path[0 .. $ - 1];
         Stamp value;
         if (!stamp(path.toStringz, value)) { active = false; return; }
@@ -198,6 +219,12 @@ void describeInput(string path) {
                 active = false;
                 return;
             }
+        }
+        if (auto previous = path in inputs) {
+            if (*previous != value) active = false;
+            return;
+        }
+        if (value.inode) {
             // Virtual files need not change their timestamps when their data
             // changes. They cannot participate in a metadata-validated cache.
             auto canonical = realpath(path.toStringz, null);
@@ -210,9 +237,7 @@ void describeInput(string path) {
                     return;
                 }
         }
-        if (auto previous = path in inputs) {
-            if (*previous != value) active = false;
-        } else inputs[path] = value;
+        inputs[path] = value;
     } catch (Exception) { active = false; }
 }
 
@@ -221,10 +246,9 @@ void describeInput(string path) {
 void describeTree(string path, bool files = false, bool hidden = false) {
     try {
         import std.file : exists, isDir, dirEntries, SpanMode;
-        import std.path : baseName;
+        import std.path : absolutePath, baseName;
         if (!active) return;
-        import std.path : absolutePath;
-        path = absolutePath(path);
+        path = absolutePath(path, workingDirectory);
         while (path.length > 1 && path[$ - 1] == '/') path = path[0 .. $ - 1];
         if (path == cacheDirectory) { active = false; return; }
         const key = path ~ (files ? "F" : "D") ~ (hidden ? "H" : "V");
@@ -246,12 +270,18 @@ void describeGit(string root) {
         import std.path : buildPath, dirName;
         import std.process : environment;
         import std.string : split, toLower;
-        import std.algorithm : canFind, filter;
+        import std.algorithm : canFind, filter, startsWith;
         import std.array : array;
         import std.ascii : isWhite;
         if (!active) return;
-        foreach (name, value; environment.toAA())
-            if (name.length >= 4 && name[0 .. 4] == "GIT_" && name != "GIT_PAGER") { active = false; return; }
+        foreach (name, value; environment.toAA()) {
+            const affectsGit = name == "GIT_DIR" || name == "GIT_WORK_TREE"
+                || name == "GIT_COMMON_DIR" || name.startsWith("GIT_CONFIG")
+                || name == "GIT_CEILING_DIRECTORIES" || name == "GIT_OBJECT_DIRECTORY"
+                || name == "GIT_ALTERNATE_OBJECT_DIRECTORIES" || name == "GIT_NAMESPACE"
+                || name == "GIT_REPLACE_REF_BASE" || name == "GIT_NO_REPLACE_OBJECTS";
+            if (affectsGit) { active = false; return; }
+        }
         auto dir = buildPath(root, ".git");
         describeInput(dir);
         if (!exists(dir) || !isDir(dir)) return;
@@ -284,22 +314,29 @@ void describeGit(string root) {
 
 void describeCompiler(string binary, string output, string compiler) {
     try {
-        import std.file : exists, read;
+        import std.file : exists, isDir, read;
         import std.string : toStringz, fromStringz;
         import core.sys.posix.stdlib : realpath;
         import std.path : buildPath, dirName;
         import std.process : environment;
         import std.string : split, splitLines, strip, indexOf;
         import std.algorithm : startsWith, canFind, endsWith;
+        import core.sys.posix.unistd : access, X_OK;
         if (!active) return;
         // Other compilers and wrappers require separate configuration discovery.
         if (compiler != "dmd") { active = false; return; }
-        string resolved = binary;
-        if (!exists(resolved)) foreach (directory; environment.get("PATH", "").split(":")) {
+        string resolved;
+        if (binary.canFind("/")) resolved = binary;
+        else foreach (directory; environment.get("PATH", "").split(":")) {
             auto candidate = buildPath(directory, binary);
             describeInput(candidate);
-            if (exists(candidate)) { resolved = candidate; break; }
+            if (exists(candidate) && !isDir(candidate)
+                && access(candidate.toStringz, X_OK) == 0) {
+                resolved = candidate;
+                break;
+            }
         }
+        if (!resolved.length) { active = false; return; }
         describeInput(resolved);
         describeLibraries(resolved);
         if (auto canonical = realpath(resolved.toStringz, null)) {
@@ -433,17 +470,20 @@ private void describeLibraries(string executable) {
 
 void saveDescribeCache(string output) {
     import std.array : appender;
-    import std.file : rename, remove;
+    import std.file : mkdirRecurse, rename, remove;
     import std.string : toStringz;
     import std.path : dirName;
     if (!active) return;
     active = false;
     try {
+        mkdirRecurse(cacheDirectory);
         auto data = appender!(ubyte[]);
         ulong count;
         foreach (path, expected; inputs) {
             Stamp actual;
             if (!stamp(path.toStringz, actual) || actual != expected) return;
+            if (expected.inode && (expected.mtime >= cacheStartTime
+                || expected.ctime >= cacheStartTime)) return;
             // An already tracked directory also detects creation of an absent
             // child. Never add a broader directory dependency just to reduce
             // stats: HOME and temporary directories change for unrelated work.
