@@ -1,0 +1,7 @@
+Avoid repeated directory scans while describing packages
+
+DUB reuses file discovery results while collecting the build settings for a
+package, including its selected and alternative configurations. Overlapping
+source, import, C import, and string import paths share the same directory scan.
+The results are discarded after collecting settings, so later calls and
+pre-generation commands continue to see changes to the source tree.
