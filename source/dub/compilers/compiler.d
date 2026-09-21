@@ -204,6 +204,11 @@ interface Compiler {
 			build_platform.compilerVersion = ver;
 		}
 
+		version (linux) {
+			import dub.internal.describecache : describeCompiler;
+			describeCompiler(compiler_binary, result.output, build_platform.compiler);
+		}
+
 		return build_platform;
 	}
 

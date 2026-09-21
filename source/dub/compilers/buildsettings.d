@@ -474,6 +474,42 @@ struct Flags (T) {
 	}
 }
 
+// Shared only while collecting settings; never survives a command or a call
+// that can run generation hooks and change the source tree.
+package(dub) struct FileDiscoveryCache {
+	struct Entry {
+		string name;
+		string relativePath;
+	}
+	Entry[][string] entries;
+
+	Entry[] list(NativePath path, NativePath basePath)
+	{
+		import std.path : baseName, pathSplitter;
+		import std.algorithm.searching : canFind;
+
+		const pstr = path.toNativeString();
+		const key = basePath.toNativeString() ~ "\0" ~ pstr;
+		if (auto cached = key in entries) return *cached;
+		version (linux) {
+			import dub.internal.describecache : describeTree;
+			describeTree(pstr);
+		}
+		auto files = appender!(Entry[]);
+		foreach (d; dirEntries(pstr, SpanMode.depth)) {
+			// Explicitly selected hidden roots are allowed, but hidden entries
+			// below them are excluded, as in the uncached discovery path.
+			if (pathSplitter(d.name[pstr.length .. $])
+				.canFind!(name => name.length && name[0] == '.') || d.isDir)
+				continue;
+			auto relative = NativePath(d.name).relativeTo(basePath).toNativeString();
+			files ~= Entry(d.name.baseName, relative.replace("$", "$$"));
+		}
+		entries[key] = files.data;
+		return files.data;
+	}
+}
+
 /// Constructs a BuildSettings object from this template.
 void getPlatformSettings(in BuildSettingsTemplate* this_, ref BuildSettings dst,
 	in BuildPlatform platform, NativePath base_path) {
@@ -483,6 +519,12 @@ void getPlatformSettings(in BuildSettingsTemplate* this_, ref BuildSettings dst,
 /// Ditto
 void getPlatformSettings(in BuildSettingsTemplate this_, ref BuildSettings dst,
 	in BuildPlatform platform, NativePath base_path) {
+	FileDiscoveryCache files;
+	getPlatformSettings(this_, dst, platform, base_path, files);
+}
+
+package(dub) void getPlatformSettings(in BuildSettingsTemplate this_, ref BuildSettings dst,
+	in BuildPlatform platform, NativePath base_path, ref FileDiscoveryCache fileCache) {
 	dst.targetType = this_.targetType;
 	if (!this_.targetPath.empty) dst.targetPath = this_.targetPath;
 	if (!this_.targetName.empty) dst.targetName = this_.targetName;
@@ -523,20 +565,8 @@ void getPlatformSettings(in BuildSettingsTemplate this_, ref BuildSettings dst,
 					logWarn("Invalid source/import path: %s", path.toNativeString());
 					continue;
 				}
-				auto pstr = path.toNativeString();
-				foreach (d; dirEntries(pstr, pattern, SpanMode.depth)) {
-					import std.path : baseName, pathSplitter;
-					import std.algorithm.searching : canFind;
-					// eliminate any hidden files, or files in hidden directories. But always include
-					// files that are listed inside hidden directories that are specifically added to
-					// the project.
-					if (d.isDir || pathSplitter(d.name[pstr.length .. $])
-						.canFind!(name => name.length && name[0] == '.'))
-						continue;
-					auto src = NativePath(d.name).relativeTo(base_path);
-					// Discovered paths are literal filesystem values, but are processed
-					// together with variable-bearing recipe settings later on.
-					files ~= src.toNativeString().replace("$", "$$");
+				foreach (file; fileCache.list(path, base_path)) {
+					if (globMatch(file.name, pattern)) files ~= file.relativePath;
 				}
 			}
 		}
@@ -595,6 +625,50 @@ void getPlatformSettings(in BuildSettingsTemplate this_, ref BuildSettings dst,
 	this_.getPlatformSetting_!("postRunEnvironments", "addPostRunEnvironments")(dst, platform);
 	this_.getPlatformSetting_!("buildRequirements", "addRequirements")(dst, platform);
 	this_.getPlatformSetting_!("buildOptions", "addOptions")(dst, platform);
+}
+
+unittest {
+	import std.path : buildPath;
+	import std.uuid : randomUUID;
+
+	const root = buildPath(tempDir(), "dub-file-discovery-" ~ randomUUID().toString());
+	mkdirRecurse(buildPath(root, "src", ".hidden"));
+	scope (exit) rmdirRecurse(root);
+	foreach (name; ["a.d", "api.di", "native.c", "native.h", "$literal.d", ".ignored.d", ".hidden/ignored.d"])
+		std.file.write(buildPath(root, "src", name), "");
+
+	BuildSettingsTemplate settings;
+	settings.sourcePaths[""] = ["src"];
+	settings.importPaths[""] = ["src"];
+	settings.cSourcePaths[""] = ["src"];
+	settings.cImportPaths[""] = ["src"];
+	settings.stringImportPaths[""] = ["src"];
+
+	string[] paths(string[] names) {
+		string[] result;
+		foreach (name; names) result ~= buildPath("src", name);
+		return result.sort().array;
+	}
+
+	BuildSettings first;
+	settings.getPlatformSettings(first, BuildPlatform.init, NativePath(root));
+	assert(first.sourceFiles.dup.sort().array == paths(["a.d", "native.c", "$$literal.d"]));
+	assert(first.importFiles.dup.sort().array == paths(["api.di", "native.h"]));
+	assert(first.stringImportFiles.dup.sort().array == paths(["a.d", "api.di", "native.c", "native.h", "$$literal.d"]));
+
+	// A subsequent call in the same process must see additions and removals.
+	remove(buildPath(root, "src", "a.d"));
+	std.file.write(buildPath(root, "src", "new.d"), "");
+	BuildSettings second;
+	settings.getPlatformSettings(second, BuildPlatform.init, NativePath(root));
+	assert(second.sourceFiles.dup.sort().array == paths(["new.d", "native.c", "$$literal.d"]));
+
+	// Hidden roots explicitly listed by the recipe remain discoverable.
+	settings = BuildSettingsTemplate.init;
+	settings.sourcePaths[""] = [buildPath("src", ".hidden")];
+	BuildSettings hidden;
+	settings.getPlatformSettings(hidden, BuildPlatform.init, NativePath(root));
+	assert(hidden.sourceFiles == paths([buildPath(".hidden", "ignored.d")]));
 }
 
 unittest { // issue #1407 - duplicate main source file

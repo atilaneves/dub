@@ -1024,6 +1024,10 @@ class Project {
 				ret.targets = gen.targetDescriptions;
 				ret.targetLookup = gen.targetDescriptionLookup;
 			} catch (Exception e) {
+				version (linux) {
+					import dub.internal.describecache : cancelDescribeCache;
+					cancelDescribeCache();
+				}
 				logDiagnostic("Skipping targets description: %s", e.msg);
 				logDebug("Full error: %s", e.toString().sanitize);
 			}
@@ -1580,6 +1584,10 @@ private string[] processVarsWithGlob(Project, Package)(string var, in Project pr
 		path = buildNormalizedPath(cwd, path);
 	}
 
+	version (linux) {
+		import dub.internal.describecache : describeTree;
+		describeTree(path, false, true);
+	}
 	return dirEntries(path, SpanMode.depth)
 		.map!(de => prependCwd
 			? de.name.relativePath(cwd)

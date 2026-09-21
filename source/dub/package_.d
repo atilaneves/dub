@@ -366,12 +366,18 @@ class Package {
 	*/
 	BuildSettings getBuildSettings(in BuildPlatform platform, string config)
 	const {
+		FileDiscoveryCache files;
+		return getBuildSettings(platform, config, files);
+	}
+
+	private BuildSettings getBuildSettings(in BuildPlatform platform, string config, ref FileDiscoveryCache files)
+	const {
 		BuildSettings ret;
-		m_info.buildSettings.getPlatformSettings(ret, platform, this.path);
+		m_info.buildSettings.getPlatformSettings(ret, platform, this.path, files);
 		bool found = false;
 		foreach(ref conf; m_info.configurations){
 			if( conf.name != config ) continue;
-			conf.buildSettings.getPlatformSettings(ret, platform, this.path);
+			conf.buildSettings.getPlatformSettings(ret, platform, this.path, files);
 			found = true;
 			break;
 		}
@@ -394,10 +400,16 @@ class Package {
 	*/
 	BuildSettings getCombinedBuildSettings()
 	const {
+		FileDiscoveryCache files;
+		return getCombinedBuildSettings(files);
+	}
+
+	private BuildSettings getCombinedBuildSettings(ref FileDiscoveryCache files)
+	const {
 		BuildSettings ret;
-		m_info.buildSettings.getPlatformSettings(ret, BuildPlatform.any, this.path);
+		m_info.buildSettings.getPlatformSettings(ret, BuildPlatform.any, this.path, files);
 		foreach(ref conf; m_info.configurations)
-			conf.buildSettings.getPlatformSettings(ret, BuildPlatform.any, this.path);
+			conf.buildSettings.getPlatformSettings(ret, BuildPlatform.any, this.path, files);
 
 		// construct default target name based on package name
 		if (ret.targetName.empty) ret.targetName = this.name.replace(":", "_");
@@ -610,8 +622,9 @@ class Package {
 		ret.dependencies = getDependencies(config).keys;
 
 		// save build settings
-		BuildSettings bs = getBuildSettings(platform, config);
-		BuildSettings allbs = getCombinedBuildSettings();
+		FileDiscoveryCache files;
+		BuildSettings bs = getBuildSettings(platform, config, files);
+		BuildSettings allbs = getCombinedBuildSettings(files);
 
 		ret.targetType = bs.targetType;
 		ret.targetPath = bs.targetPath;

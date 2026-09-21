@@ -23,7 +23,22 @@ version (DigitalMars) version (D_Coverage)
 	}
 }
 
-int main(string[] args)
-{
-	return runDubCommandLine(args);
+version (linux) {
+	import dub.internal.describecache;
+	alias MainFunc = extern(C) int function(char[][]);
+	extern(C) int _d_run_main(int argc, char** argv, MainFunc mainFunc);
+
+	extern(C) int main(int argc, char** argv) {
+		const result = tryDescribeCache(argc, argv);
+		if (result >= 0) return result;
+		return _d_run_main(argc, argv, &dubMain);
+	}
+
+	private extern(C) int dubMain(char[][] args) {
+		auto immutableArgs = cast(string[])args;
+		startDescribeCache(immutableArgs);
+		return runDubCommandLine(immutableArgs);
+	}
+} else {
+	int main(string[] args) { return runDubCommandLine(args); }
 }

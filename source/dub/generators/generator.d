@@ -980,11 +980,19 @@ void findFilesMatchingGlobs(in NativePath path, in string[] globList, void deleg
 		}
 		else
 		{
+			version (linux) {
+				import dub.internal.describecache : describeInput;
+				describeInput(f);
+			}
 			if (f.isDir)
 				addDir(f);
 			else
 				addFile(f);
 		}
+	}
+	version (linux) if (globs.length) {
+		import dub.internal.describecache : describeTree;
+		describeTree(path.toNativeString(), false, true);
 	}
 	if (globs.length) // Search all files for glob matches
 		foreach (f; dirEntries(path.toNativeString(), SpanMode.breadth))
@@ -1010,6 +1018,10 @@ void findFilesMatchingGlobs(in NativePath path, in string[] globList, void deleg
 {
 	void addDir(string dir)
 	{
+		version (linux) {
+			import dub.internal.describecache : describeTree;
+			describeTree(dir, false, true);
+		}
 		foreach (f; dirEntries(dir, SpanMode.breadth))
 			addFile(f);
 	}
@@ -1046,6 +1058,10 @@ private void finalizeGeneration(in Package pack, in Project proj, in GeneratorSe
 			ensureDirectory(NativePath(buildsettings.targetPath));
 
 		if (buildsettings.copyFiles.length) {
+			version (linux) {
+				import dub.internal.describecache : cancelDescribeCache;
+				cancelDescribeCache();
+			}
 			void copyFolderRec(NativePath folder, NativePath dstfolder)
 			{
 				ensureDirectory(dstfolder);
@@ -1110,6 +1126,13 @@ void runBuildCommands(CommandType type, in string[] commands, in Package pack, i
 {
 	import dub.internal.utils : runCommands;
 
+	version (linux) {
+		import dub.internal.describecache : cancelDescribeCache;
+		// Hooks are arbitrary commands and may change files or other inputs
+		// after the cache has recorded them, so their execution invalidates the
+		// in-progress description snapshot.
+		cancelDescribeCache();
+	}
 	auto env = makeCommandEnvironmentVariables(type, pack, proj, settings, build_settings, extraVars);
 	auto sub_commands = processVars(proj, pack, settings, commands, false, env);
 

@@ -65,6 +65,10 @@ else
 // by invoking the "git" executable
 private string determineVersionWithGitTool(NativePath path)
 {
+	version (linux) {
+		import dub.internal.describecache : describeGit;
+		describeGit(path.toNativeString());
+	}
 	import std.process;
 
 	auto git_dir = path ~ ".git";
