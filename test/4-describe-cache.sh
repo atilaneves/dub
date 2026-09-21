@@ -48,6 +48,26 @@ printf '[Environment]\nDFLAGS=-m32\n' > dmd.conf
 check_description 'compiler configuration created'
 rm dmd.conf
 check_description 'compiler configuration removed'
+mkdir -p "$fixture/compiler-input"
+printf 'module compiler_input;\n' > "$fixture/compiler-input/extra.d"
+printf '[Environment]\nDFLAGS=%s\n' "$fixture/compiler-input/extra.d" > dmd.conf
+"$DUB" describe > "$fixture/compiler-input/warm.json"
+"$DUB" describe > "$fixture/compiler-input/warm.json"
+[[ -f "$cache" ]] || die $LINENO 'No cache for compiler source input'
+printf 'module compiler_input;\nthis is invalid;\n' > "$fixture/compiler-input/extra.d"
+if "$DUB" describe > "$fixture/compiler-input/cached-invalid.json" 2>/dev/null; then
+    cached_status=0
+else
+    cached_status=$?
+fi
+if DUB_NO_DESCRIBE_CACHE=1 "$DUB" describe > "$fixture/compiler-input/live-invalid.json" 2>/dev/null; then
+    live_status=0
+else
+    live_status=$?
+fi
+[[ $cached_status -ne 0 ]] || die $LINENO 'Compiler source input was served from cache'
+[[ $live_status -ne 0 ]] || die $LINENO 'Invalid compiler source unexpectedly succeeded'
+rm dmd.conf
 export DFLAGS=-version=CacheTest
 check_description 'environment changed'
 unset DFLAGS

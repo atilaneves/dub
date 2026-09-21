@@ -283,8 +283,8 @@ void describeCompiler(string binary, string output, string compiler) {
         import core.sys.posix.stdlib : realpath;
         import std.path : buildPath, dirName;
         import std.process : environment;
-        import std.string : split, splitLines, strip;
-        import std.algorithm : startsWith, canFind;
+        import std.string : split, splitLines, strip, indexOf;
+        import std.algorithm : startsWith, canFind, endsWith;
         if (!active) return;
         // Other compilers and wrappers require separate configuration discovery.
         if (compiler != "dmd") { active = false; return; }
@@ -318,7 +318,49 @@ void describeCompiler(string binary, string output, string compiler) {
                 describeInput(path);
                 describeInput(buildPath(dirName(path), "dmd.conf"));
             }
-            if (line.startsWith("DFLAGS ") && line.canFind("@")) active = false;
+            if (line.startsWith("DFLAGS ")) {
+                // A source file passed through dmd.conf is an input to the
+                // probe, but is not otherwise discovered by DUB. Keep the
+                // normal option-only fast path and disable caching if a
+                // quoted/escaped positional argument names a file (response
+                // files are already unsupported for the same reason).
+                string token;
+                bool quoted;
+                char quote;
+                bool escaped;
+                void finishToken() {
+                    if (!token.length) return;
+                    if (token[0] == '@' || (!token.startsWith("-")
+                        && (token.endsWith(".d") || token.endsWith(".di") || exists(token))))
+                        active = false;
+                    token = null;
+                }
+                foreach (c; line[7 .. $]) {
+                    if (escaped) { token ~= c; escaped = false; continue; }
+                    if (c == '\\') { escaped = true; continue; }
+                    if (quoted) {
+                        if (c == quote) quoted = false;
+                        else token ~= c;
+                    } else if (c == '"' || c == '\'') {
+                        quoted = true;
+                        quote = c;
+                    } else if (c == ' ' || c == '\t') finishToken();
+                    else token ~= c;
+                }
+                if (escaped) token ~= '\\';
+                finishToken();
+            }
+            // DMD's verbose probe lists every source reached by imports.
+            // Record those paths so edits to external/transitive inputs
+            // invalidate the cache even when no positional source was used.
+            auto open = line.indexOf("(/");
+            if (open >= 0) {
+                auto path = line[open + 1 .. $];
+                if (path.length && path[$ - 1] == ')') path = path[0 .. $ - 1];
+                auto location = path.indexOf('(');
+                if (location >= 0) path = path[0 .. location];
+                if (path.length) describeInput(path);
+            }
         }
     } catch (Exception) { active = false; }
 }
