@@ -17,6 +17,15 @@ cache=.dub/describe-cache-v1.bin
 printf 'module original;\n' > source/original.d
 printf '{"name":"cache-check","targetType":"library"}\n' > dub.json
 
+# setup-dlang exports LD_LIBRARY_PATH in CI. Custom library search paths are
+# intentionally unsupported by the cache: verify fallback before testing hits.
+LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/usr/lib}" "$DUB" describe > "$fixture/library-path.json"
+LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/usr/lib}" DUB_NO_DESCRIBE_CACHE=1 \
+    "$DUB" describe > "$fixture/library-path-live.json"
+cmp "$fixture/library-path.json" "$fixture/library-path-live.json"
+[[ ! -e "$cache" ]] || die $LINENO 'Cached description with custom library search path'
+unset LD_LIBRARY_PATH
+
 function check_description {
     # A first invocation can create selections or build directories. Such an
     # invocation must not publish a snapshot of inputs changed during the run.

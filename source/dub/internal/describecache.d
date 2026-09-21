@@ -26,8 +26,14 @@ private bool stamp(const(char)* path, out Stamp result) nothrow @nogc {
     stat_t s;
     if (stat(path, &s) != 0)
         return errno == ENOENT || errno == ENOTDIR;
-    result = Stamp(s.st_dev, s.st_ino, s.st_mode, s.st_size,
-        s.st_mtim.tv_sec, s.st_mtim.tv_nsec, s.st_ctim.tv_sec, s.st_ctim.tv_nsec);
+    // druntime exposes either timespec members or separate second/nanosecond
+    // fields, depending on its version, architecture and feature macros.
+    static if (__traits(hasMember, stat_t, "st_mtim"))
+        result = Stamp(s.st_dev, s.st_ino, s.st_mode, s.st_size,
+            s.st_mtim.tv_sec, s.st_mtim.tv_nsec, s.st_ctim.tv_sec, s.st_ctim.tv_nsec);
+    else
+        result = Stamp(s.st_dev, s.st_ino, s.st_mode, s.st_size,
+            s.st_mtime, s.st_mtimensec, s.st_ctime, s.st_ctimensec);
     return true;
 }
 
