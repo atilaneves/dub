@@ -491,6 +491,10 @@ package(dub) struct FileDiscoveryCache {
 		const pstr = path.toNativeString();
 		const key = basePath.toNativeString() ~ "\0" ~ pstr;
 		if (auto cached = key in entries) return *cached;
+		version (linux) {
+			import dub.internal.describecache : describeTree;
+			describeTree(pstr);
+		}
 		auto files = appender!(Entry[]);
 		foreach (d; dirEntries(pstr, SpanMode.depth)) {
 			// Explicitly selected hidden roots are allowed, but hidden entries

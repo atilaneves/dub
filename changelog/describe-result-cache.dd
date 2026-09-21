@@ -1,0 +1,14 @@
+Reuse unchanged project descriptions without a background process
+
+On Linux, plain $(D dub describe) can reuse a validated on-disk description
+before initializing the D runtime. The cache records recipes, selections,
+settings, dependency registrations, discovered directories, Git references,
+compiler configuration, executable identities, and shared libraries. Changes
+to the environment also invalidate it. The first invocation and invalidated
+entries run normal discovery and additionally collect the cache inputs.
+
+The initial implementation supports native DMD and falls back to the ordinary
+command for other compilers, compiler wrappers, generation hooks, file copying,
+Git configuration includes, pkg-config resolution, and additional command-line arguments. Corrupted
+or unwritable caches also use the ordinary command. Set
+$(D DUB_NO_DESCRIBE_CACHE=1) to bypass the cache explicitly.

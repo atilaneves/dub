@@ -146,6 +146,11 @@ void resolveLibs(ref BuildSettings settings, const scope ref BuildPlatform platf
 	import std.array : array;
 
 	if (settings.libs.length == 0) return;
+	version (linux) {
+		// pkg-config can consult arbitrary package metadata and search paths.
+		import dub.internal.describecache : cancelDescribeCache;
+		cancelDescribeCache();
+	}
 
 	if (settings.targetType == TargetType.library || settings.targetType == TargetType.staticLibrary) {
 		logDiagnostic("Ignoring all import libraries for static library build.");

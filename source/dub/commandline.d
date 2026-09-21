@@ -1964,7 +1964,12 @@ class DescribeCommand : PackageBuildCommand {
 			dub.listProjectData(settings, m_data, lt);
 		} else {
 			auto desc = dub.project.describe(settings);
-			writeln(desc.serializeToPrettyJson());
+			auto output = desc.serializeToPrettyJson();
+			version (linux) {
+				import dub.internal.describecache : saveDescribeCache;
+				saveDescribeCache(output);
+			}
+			writeln(output);
 		}
 
 		return 0;

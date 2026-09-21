@@ -32,6 +32,7 @@ source/dub/internal/configy/exceptions.d
 source/dub/internal/configy/fieldref.d
 source/dub/internal/configy/read.d
 source/dub/internal/configy/utils.d
+source/dub/internal/describecache.d
 source/dub/internal/dyaml/composer.d
 source/dub/internal/dyaml/constructor.d
 source/dub/internal/dyaml/dumper.d

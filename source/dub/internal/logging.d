@@ -335,6 +335,10 @@ void log(T...)(
 {
 	if (level < _minLevel)
 		return;
+	version (linux) {
+		import dub.internal.describecache : cancelDescribeCache;
+		cancelDescribeCache();
+	}
 
 	auto hasTag = true;
 	if (level <= LogLevel.diagnostic)
